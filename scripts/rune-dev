@@ -173,6 +173,7 @@ def parse(argv):
     parser.add_argument("--patch", action="append", default=[], metavar="GLOB",
                         help="files, relative to the app crate, whose fn bodies patch live (repeatable; ** spans directories)")
     parser.add_argument("--port", type=int, default=18744)
+    parser.add_argument("--target", help="Rust target triple passed to dx (env RUNE_DEV_TARGET), for a cross build")
     parser.add_argument("--desk", action="store_true", help="run the app on this Mac and compile on --build-host")
     parser.add_argument("--local", action="store_true", default=bool(os.environ.get("RUNE_DEV_LOCAL")),
                         help="compile and run here; a restart-needed edit rebuilds and relaunches (env RUNE_DEV_LOCAL)")
@@ -349,11 +350,13 @@ def crate_settings(crate_dir, stop):
     return doc.get("package", {}).get("name"), "rune-hot" in profiles
 
 
-def dx_command(dx, port, package, features, bin, cargo_config, app_args):
+def dx_command(dx, port, package, features, bin, cargo_config, app_args, target=None):
     command = [str(dx), "serve", "--hot-patch", "--platform", "server", "--open", "false", "--interactive", "false",
                "--addr", "127.0.0.1", "--port", str(port), "--package", package, "--features", ",".join(["hot", *filter(None, features.split(","))]), "--profile", "rune-hot"]
     if bin:
         command += ["--bin", bin]
+    if target:
+        command += ["--target", target]
     if cargo_config:
         command.append("--cargo-args=" + shlex.join(a for c in cargo_config for a in ("--config", c)))
     if app_args:
@@ -893,7 +896,7 @@ def run(args):
     park.unlink(missing_ok=True)
     if opts.desk:
         env["RUNE_HOT_PARK"] = str(park)
-    command = dx_command(dx, opts.port, package, opts.features, opts.bin, cargo_config, app_args)
+    command = dx_command(dx, opts.port, package, opts.features, opts.bin, cargo_config, app_args, opts.target or os.environ.get("RUNE_DEV_TARGET"))
     process = subprocess.Popen(command, cwd=mirror / crate if crate else mirror, env=env, start_new_session=True)
     reported = None
     def report_base():

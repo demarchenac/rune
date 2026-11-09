@@ -1,0 +1,44 @@
+#!/bin/sh
+# Links Windows binaries in WSL2 with zig's bundled MinGW libraries.
+here=$(dirname "$(readlink -f "$0")")
+search=""
+previous=""
+for arg in "$@"; do
+  case "$arg" in
+    -L) previous="-L"; continue ;;
+    -L*) search="$search
+${arg#-L}" ;;
+    *) [ "$previous" = "-L" ] && search="$search
+$arg" ;;
+  esac
+  previous=""
+done
+
+kept=""
+add() { kept="$kept
+$1"; }
+for arg in "$@"; do
+  case "$arg" in
+    -lgcc_s|-lgcc|-lmsvcrt|-lmingwex|-lmingw32|-l:libpthread.a|-nodefaultlibs|-Wl,-O1|-fno-use-linker-plugin) ;;
+    -Wl,--disable-auto-image-base|-Wl,--dynamicbase|-Wl,--high-entropy-va|-Wl,--nxcompat|-Wl,--large-address-aware|-Wl,--insert-timestamp) ;;
+    -Wl,--export-dynamic-symbol*) ;; # dx 0.7.10 passes this ELF-only flag for windows-gnu; zig rejects it.
+    -lgcc_eh) add -lunwind ;;
+    -Wl,*.def) add "${arg#-Wl,}" ;;
+    -lwindows.*)
+      # The windows crates ship their import libraries by a name zig won't look for.
+      name="lib${arg#-l}.a"
+      found=""
+      IFS='
+'
+      for folder in $search; do
+        [ -f "$folder/$name" ] && found="$folder/$name"
+      done
+      unset IFS
+      add "${found:-$arg}" ;;
+    *) add "$arg" ;;
+  esac
+done
+IFS='
+'
+set -- $kept
+PYTHONPATH="${ZIGLANG_DIR:-$here/zig}" exec python3 -m ziglang cc -target x86_64-windows-gnu "$@"

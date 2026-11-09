@@ -1,0 +1,9 @@
+[package]
+name = "wsl-hot-app"
+version = "0.0.0"
+edition = "2024"
+[features]
+hot = ["rune/hot"]
+[dependencies]
+rune = { path = "../../../crates/rune", default-features = false, features = ["embedded-fonts"] }
+[workspace]

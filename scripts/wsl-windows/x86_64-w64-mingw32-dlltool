@@ -1,0 +1,13 @@
+#!/bin/sh
+# rustc calls GNU dlltool with GNU flags; this hands the same job to llvm-dlltool.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d|--input-def) def="$2"; shift 2 ;;
+    -D|--dllname) dll="$2"; shift 2 ;;
+    -l|--output-lib) lib="$2"; shift 2 ;;
+    -m) shift 2 ;;
+    --temp-prefix) shift 2 ;;
+    *) shift ;;
+  esac
+done
+exec llvm-dlltool -m i386:x86-64 -D "$dll" -d "$def" -l "$lib"
