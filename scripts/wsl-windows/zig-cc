@@ -21,7 +21,12 @@ for arg in "$@"; do
   case "$arg" in
     -lgcc_s|-lgcc|-lmsvcrt|-lmingwex|-lmingw32|-l:libpthread.a|-nodefaultlibs|-Wl,-O1|-fno-use-linker-plugin) ;;
     -Wl,--disable-auto-image-base|-Wl,--dynamicbase|-Wl,--high-entropy-va|-Wl,--nxcompat|-Wl,--large-address-aware|-Wl,--insert-timestamp) ;;
-    -Wl,--export-dynamic-symbol*) ;; # dx 0.7.10 passes this ELF-only flag for windows-gnu; zig rejects it.
+    -Wl,--export-dynamic-symbol,main) add "$here/export-main.def" ;; # subsecond finds main with GetProcAddress.
+    -shared)
+      add "$arg"
+      # A dx patch needs main too, to compute its load offset. Other DLLs have no main.
+      case "$*" in *-patch-*) add "$here/export-main.def" ;; esac ;;
+    -Wl,--eh-frame-hdr|-Wl,-z,*|-Wl,-Bdynamic) ;; # ELF flags dx's Gnu flavor passes.
     -lgcc_eh) add -lunwind ;;
     -Wl,*.def) add "${arg#-Wl,}" ;;
     -lwindows.*)

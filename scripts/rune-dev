@@ -336,7 +336,7 @@ def patchable(crate, globs):
         if not key.startswith(prefix) or not key.endswith(".rs"):
             return False
         path = PurePosixPath(key.removeprefix(prefix))
-        return any(path.full_match(glob) for glob in globs)
+        return any(getattr(path, "full_match", path.match)(glob) for glob in globs)
     return allowed
 
 
@@ -356,7 +356,8 @@ def dx_command(dx, port, package, features, bin, cargo_config, app_args, target=
     if bin:
         command += ["--bin", bin]
     if target:
-        command += ["--target", target]
+        # rune-dev's mirror is on the Linux filesystem, so dx needn't poll it under WSL2.
+        command += ["--target", target, "--wsl-file-poll-interval", "0"]
     if cargo_config:
         command.append("--cargo-args=" + shlex.join(a for c in cargo_config for a in ("--config", c)))
     if app_args:
@@ -412,7 +413,9 @@ def app_argv(opts, root):
         if flag in app_args:
             i = app_args.index(flag) + 1
             if i == len(app_args): opts.parser.error(flag + " needs a path")
-            app_args[i] = str((root / app_args[i]).resolve())
+            # A cross-built app runs elsewhere, and its paths are that system's.
+            if not (opts.target or os.environ.get("RUNE_DEV_TARGET")):
+                app_args[i] = str((root / app_args[i]).resolve())
     return (["--hot"] if opts.example else []) + app_args
 
 

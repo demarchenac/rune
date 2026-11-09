@@ -226,9 +226,10 @@ fn connect() {
     let pid = std::process::id();
     dioxus_devtools::connect(move |msg| {
         if let dioxus_devtools::DevserverMsg::HotReload(msg) = msg
-            && let Some(table) = msg.jump_table
+            && let Some(mut table) = msg.jump_table
             && msg.for_pid == Some(pid)
         {
+            table.lib = reachable_lib(table.lib);
             let lib = table.lib.clone();
             // SAFETY: rune-dev's guard admits only edits that keep every type, static and
             // signature; the patch was linked against this binary's ASLR reference.
@@ -237,6 +238,16 @@ fn connect() {
             }
         }
     });
+}
+
+/// dx names a patch by its path where it was built. With `RUNE_HOT_WSL_ROOT` (`\\wsl.localhost\Distro`),
+/// a Windows app built in WSL2 reaches that Linux path through the distro's share.
+fn reachable_lib(lib: std::path::PathBuf) -> std::path::PathBuf {
+    let Some(root) = std::env::var_os("RUNE_HOT_WSL_ROOT") else { return lib };
+    let linux_path = lib.to_string_lossy().replace('/', "\\");
+    let mut reachable = root;
+    reachable.push(linux_path);
+    reachable.into()
 }
 
 pub(crate) struct Session {
