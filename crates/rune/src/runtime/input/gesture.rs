@@ -172,7 +172,7 @@ impl<S: 'static> Runtime<S> {
     pub fn button_down(&mut self, x: f32, y: f32, button: PointerButton) {
         match button {
             PointerButton::Primary => return self.pointer_down(x, y),
-            PointerButton::Secondary => return self.secondary_down(x, y),
+            PointerButton::Secondary if !self.takes_button(x, y, button) => return self.secondary_down(x, y),
             _ => {}
         }
         if self.press.is_held() { return; }
@@ -197,12 +197,20 @@ impl<S: 'static> Runtime<S> {
         self.press.hold(capture::Held::new(path, d, button, (x, y), now, false, None));
     }
 
+    /// Whether an element at (x, y) opted in to pressing and dragging with this button.
+    fn takes_button(&self, x: f32, y: f32, button: PointerButton) -> bool {
+        let hit = self.hits.iter().rev().find(|&&(id, r)| self.hit_contains(id, r, x, y)).and_then(|(id, _)| self.node_index.get(id).copied());
+        std::iter::successors(hit, |&i| self.nodes[i].parent)
+            .take_while(|&i| !self.subtree_exiting(i) && self.allowed(i))
+            .any(|i| self.nodes[i].handlers.gestures.as_ref().is_some_and(|g| g.buttons & button.bit() != 0))
+    }
+
     /// A mouse button came up at (x, y): the release of [`Self::button_down`].
     pub fn button_up(&mut self, x: f32, y: f32, button: PointerButton) {
         match button {
             PointerButton::Primary => self.pointer_up(x, y),
-            PointerButton::Secondary => self.secondary_up(x, y),
             _ if self.press.held().is_some_and(|h| h.button == button) => self.release_capture(x, y),
+            PointerButton::Secondary => self.secondary_up(x, y),
             _ => {}
         }
     }

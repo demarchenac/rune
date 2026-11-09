@@ -500,9 +500,9 @@ impl<S: 'static> Host<S> {
             WindowEvent::MouseInput { state, button: MouseButton::Right, .. } => {
                 if let Some((x, y)) = button_at(rt, &l.window) {
                     match state {
-                        ElementState::Pressed => rt.secondary_down(x, y),
+                        ElementState::Pressed => rt.button_down(x, y, crate::PointerButton::Secondary),
                         ElementState::Released => {
-                            rt.secondary_up(x, y);
+                            rt.button_up(x, y, crate::PointerButton::Secondary);
                             // At the pointer, while it's still where the click was.
                             if let Some(menu) = rt.take_window_menu() { chrome::window_menu(&l.window, menu, Some((x, y))); }
                         }
