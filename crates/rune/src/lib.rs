@@ -330,6 +330,7 @@ pub use tooling::Chrome;
 pub use tooling::extra_args;
 pub use tooling::is_headless;
 pub use tooling::run;
+pub use tooling::run_app;
 pub use tooling::run_windows;
 pub use tooling::run_windows_with;
 pub use tooling::run_windows_with_args;

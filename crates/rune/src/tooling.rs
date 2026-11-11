@@ -271,6 +271,15 @@ fn headless_window(windows: Vec<crate::AnyWindowSpec>, displays: &[crate::Displa
 }
 
 /// `run` with a compositor drawing every frame (see `compose`); `App::compositor` for other lifetimes.
+/// `run` for an `App` built from a spec, so what only an `App` sets (`App::turn_scope`) holds
+/// with hot patching too: `rune::run_app(App::new(spec).turn_scope(enter, leave))`.
+pub fn run_app<S: 'static>(app: crate::App<S>) {
+    #[cfg(feature = "hot")]
+    crate::hot::run_app(app, Args::parse());
+    #[cfg(not(feature = "hot"))]
+    app.run();
+}
+
 pub fn run_with<S: 'static>(spec: AppSpec<S>, compositor: impl Compositor<S>) {
     crate::app::App::new(spec).compositor(compositor).run();
 }

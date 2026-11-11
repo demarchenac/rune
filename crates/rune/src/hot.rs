@@ -24,6 +24,10 @@ pub(crate) struct HostState {
     poll: fn(&mut HostState, f64, &mut Tx) -> bool,
     setup: fn(&mut HostState, Waker),
     key: fn(&mut HostState, &KeyEvent, &mut Tx) -> bool,
+    /// The app's `App::turn_scope`, kept as `TurnScope<S>`, and its typed adapters.
+    scope: Option<Box<dyn Any>>,
+    enter: fn(&mut HostState),
+    leave: fn(&mut HostState),
 }
 
 thread_local! {
@@ -95,6 +99,17 @@ fn poll_adapter<S: 'static>(host: &mut HostState, t: f64, tx: &mut Tx) -> bool {
     patched_or_original!("poll", f, host.value.downcast_mut::<S>().unwrap(), t, &mut *tx)
 }
 
+/// Runs the app's turn scope hook on its own state, through the patch table as `poll` does.
+fn scope_adapter<S: 'static>(host: &mut HostState, is_enter: bool) {
+    let Some(scope) = host.scope.as_ref().and_then(|scope| scope.downcast_ref::<crate::app::TurnScope<S>>()).copied() else { return };
+    let f = if is_enter { scope.enter } else { scope.leave };
+    let state = host.value.downcast_mut::<S>().unwrap();
+    let _: () = patched_or_original!("turn_scope", f, &mut *state);
+}
+
+fn enter_adapter<S: 'static>(host: &mut HostState) { scope_adapter::<S>(host, true) }
+fn leave_adapter<S: 'static>(host: &mut HostState) { scope_adapter::<S>(host, false) }
+
 fn setup_adapter<S: 'static>(host: &mut HostState, waker: Waker) {
     let spec = host.spec.downcast_ref::<AppSpec<S>>().unwrap();
     if let Some(f) = spec.setup { f(host.value.downcast_mut::<S>().unwrap(), waker); }
@@ -117,6 +132,8 @@ pub(crate) fn run_app<S: 'static>(app: crate::App<S>, mut args: Args) {
     }
     let (srgb_blend, modifier_keys, font_smoothing) = (app.srgb_blend, app.modifier_keys, app.font_smoothing);
     let frame = (app.chrome, app.titlebar);
+    // The shell's App is rebuilt from the spec, so what it can't carry is handed over here.
+    let scope = app.turn_scope.map(|scope| Box::new(scope) as Box<dyn Any>);
     let scene = args.scene.take();
     let (spec, state, _) = app.into_parts(scene.as_deref());
     let value = Box::new(state);
@@ -128,7 +145,7 @@ pub(crate) fn run_app<S: 'static>(app: crate::App<S>, mut args: Args) {
         setup: Some(|s: &mut HostState, wake| (s.setup)(s, wake)),
         on_key: Some(|s: &mut HostState, key, tx| (s.key)(s, key, tx)),
     };
-    let state = HostState { value, spec: Box::new(spec), view: view_adapter::<S>, poll: poll_adapter::<S>, setup: setup_adapter::<S>, key: key_adapter::<S> };
+    let state = HostState { value, spec: Box::new(spec), view: view_adapter::<S>, poll: poll_adapter::<S>, setup: setup_adapter::<S>, key: key_adapter::<S>, scope, enter: enter_adapter::<S>, leave: leave_adapter::<S> };
     run_host(shell, state, args, (srgb_blend, font_smoothing), modifier_keys, frame);
 }
 
@@ -139,7 +156,11 @@ fn run_host(spec: AppSpec<HostState>, state: HostState, args: Args, look: Look, 
         let state = initial_state(&spec, args.scene.as_deref());
         return headless(&spec, state, args, look);
     }
+    let has_scope = INITIAL.with(|slot| slot.borrow().as_ref().is_some_and(|host| host.scope.is_some()));
     let mut app = crate::App::new(spec).font_smoothing(look.1).srgb_blend(look.0);
+    if has_scope {
+        app = app.turn_scope(|host: &mut HostState| (host.enter)(host), |host: &mut HostState| (host.leave)(host));
+    }
     app.modifier_keys = modifier_keys;
     // The window's frame is the app's, as without hot reload.
     (app.chrome, app.titlebar) = frame;
@@ -423,8 +444,19 @@ mod tests {
 
     fn runtime<S: Default + 'static>(view: fn(&S, &mut Cx<S>) -> El) -> crate::Runtime<HostState> {
         let spec = AppSpec::new("test", (300.0, 200.0), S::default, view);
-        let host = HostState { value: Box::new((spec.init)()), spec: Box::new(spec), view: view_adapter::<S>, poll: poll_adapter::<S>, setup: setup_adapter::<S>, key: key_adapter::<S> };
+        let host = HostState { value: Box::new((spec.init)()), spec: Box::new(spec), view: view_adapter::<S>, poll: poll_adapter::<S>, setup: setup_adapter::<S>, key: key_adapter::<S>, scope: None, enter: enter_adapter::<S>, leave: leave_adapter::<S> };
         crate::Runtime::new(host, |s, cx| (s.view)(s, cx), (300.0, 200.0), Env::new(true, 1.0))
+    }
+
+    /// `App::turn_scope` reaches the app's own state through the hot host, as without hot patching.
+    #[test]
+    fn the_turn_scope_reaches_the_apps_state_through_the_host() {
+        let spec = AppSpec::new("test", (300.0, 200.0), || 0u32, |_: &u32, _: &mut Cx<u32>| crate::el());
+        let scope = crate::app::TurnScope::<u32> { enter: |turns| *turns += 1, leave: |turns| *turns += 10 };
+        let mut host = HostState { value: Box::new(0u32), spec: Box::new(spec), view: view_adapter::<u32>, poll: poll_adapter::<u32>, setup: setup_adapter::<u32>, key: key_adapter::<u32>, scope: Some(Box::new(scope)), enter: enter_adapter::<u32>, leave: leave_adapter::<u32> };
+        (host.enter)(&mut host);
+        (host.leave)(&mut host);
+        assert_eq!(*host.value.downcast_ref::<u32>().unwrap(), 11);
     }
 
     #[test]
@@ -719,7 +751,7 @@ mod tests {
                     .on_edit(|s: &mut State| &mut s.edit).on_submit(|s: &mut State, tx| { tx.copy(s.edit.text.clone()); }))
         }
         let spec = AppSpec::new("test", (200.0, 150.0), || State { pressed: false, hovered: false, secondary: false, changed: false, keyed: false, edit: TextEdit::new("") }, view);
-        let host = HostState { value: Box::new((spec.init)()), spec: Box::new(spec), view: view_adapter::<State>, poll: poll_adapter::<State>, setup: setup_adapter::<State>, key: key_adapter::<State> };
+        let host = HostState { value: Box::new((spec.init)()), spec: Box::new(spec), view: view_adapter::<State>, poll: poll_adapter::<State>, setup: setup_adapter::<State>, key: key_adapter::<State>, scope: None, enter: enter_adapter::<State>, leave: leave_adapter::<State> };
         let mut rt = crate::Runtime::new(host, |s, cx| (s.view)(s, cx), (200.0, 150.0), Env { system_dark: true, scale: 1.0 });
         rt.frame(0.0);
         assert_eq!(rt.time_scale, 0.75);
